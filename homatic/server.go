@@ -4,19 +4,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/mux"
 	"log"
 	"net/http"
 	"os"
 
+	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
 )
 
-func main(){
+func main() {
 	fmt.Println("hello hometic : I'm Gopher!!")
 
 	r := mux.NewRouter()
-	r.Handle("/pair-device", PairDeviceHandler(createPairDevice)).Methods(http.MethodPost)
+	r.Handle("/pair-device", PairDeviceHandler(CreatePairDeviceFunc(createPairDevice))).Methods(http.MethodPost)
 
 	addr := fmt.Sprintf("0.0.0.0:%s", os.Getenv("PORT"))
 	fmt.Println("addr:", addr)
@@ -32,10 +32,10 @@ func main(){
 
 type Pair struct {
 	DeviceID int64
-	UserID int64
+	UserID   int64
 }
 
-func PairDeviceHandler(createPairDevice CreatePairDeviceFunc) http.HandlerFunc {
+func PairDeviceHandler(device Device) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var p Pair
 		err := json.NewDecoder(r.Body).Decode(&p)
@@ -47,8 +47,8 @@ func PairDeviceHandler(createPairDevice CreatePairDeviceFunc) http.HandlerFunc {
 		defer r.Body.Close()
 		fmt.Printf("pair: %#v\n", p)
 
+		err = device.Pair(p)
 
-		err = createPairDevice(p)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(err.Error())
@@ -59,6 +59,13 @@ func PairDeviceHandler(createPairDevice CreatePairDeviceFunc) http.HandlerFunc {
 	}
 }
 
+type Device interface {
+	Pair(p Pair) error
+}
+
+func (fn CreatePairDeviceFunc) Pair(p Pair) error {
+	return fn(p)
+}
 
 type CreatePairDeviceFunc func(p Pair) error
 
