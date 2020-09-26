@@ -9,14 +9,21 @@ import (
 	"os"
 
 	"github.com/gorilla/mux"
+
 	_ "github.com/lib/pq"
+	"go.uber.org/zap"
 )
 
 func main() {
 	fmt.Println("hello hometic : I'm Gopher!!")
 
+	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	r := mux.NewRouter()
-	r.Handle("/pair-device", PairDeviceHandler(CreatePairDeviceFunc(createPairDevice))).Methods(http.MethodPost)
+	r.Handle("/pair-device", PairDeviceHandler(NewCreatePairDevice(db))).Methods(http.MethodPost)
 
 	addr := fmt.Sprintf("0.0.0.0:%s", os.Getenv("PORT"))
 	fmt.Println("addr:", addr)
@@ -37,6 +44,10 @@ type Pair struct {
 
 func PairDeviceHandler(device Device) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+
+		l := zap.NewExample()
+		l = l.With(zap.Namespace("Homatic"), zap.String("i'm", "gophr"))
+		l.Info("pair-dvic")
 		var p Pair
 		err := json.NewDecoder(r.Body).Decode(&p)
 		if err != nil {
@@ -48,7 +59,6 @@ func PairDeviceHandler(device Device) http.HandlerFunc {
 		fmt.Printf("pair: %#v\n", p)
 
 		err = device.Pair(p)
-
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(err.Error())
@@ -63,18 +73,15 @@ type Device interface {
 	Pair(p Pair) error
 }
 
+type CreatePairDeviceFunc func(p Pair) error
+
 func (fn CreatePairDeviceFunc) Pair(p Pair) error {
 	return fn(p)
 }
 
-type CreatePairDeviceFunc func(p Pair) error
-
-func createPairDevice(p Pair) error {
-	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
-	if err != nil {
-		log.Fatal(err)
+func NewCreatePairDevice(db *sql.DB) CreatePairDeviceFunc {
+	return func(p Pair) error {
+		_, err := db.Exec("INSERT INTO pairs VALUES ($1,$2);", p.DeviceID, p.UserID)
+		return err
 	}
-
-	_, err = db.Exec("INSERT INTO pairs VALUES ($1,$2);", p.DeviceID, p.UserID)
-	return err
 }
