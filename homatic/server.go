@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,23 +10,29 @@ import (
 	"os"
 
 	"github.com/gorilla/mux"
-
+	"github.com/XBaNaNaX/gosep/homatic/logger"
 	_ "github.com/lib/pq"
-	"go.uber.org/zap"
 )
 
 func main() {
-	fmt.Println("hello hometic : I'm Gopher!!")
+	if err := run(); err != nil {
+		log.Fatal("can't start application", err)
+	}
+}
 
+func run() error {
+	fmt.Println("hello hometic : I'm Gopher!!")
 	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	r := mux.NewRouter()
-	r.Handle("/pair-device", PairDeviceHandler(NewCreatePairDevice(db))).Methods(http.MethodPost)
+	r.Use(logger.Middleware)
 
-	addr := fmt.Sprintf("0.0.0.0:%s", os.Getenv("PORT"))
+	r.Handle("/pair-device", CustomHandlerFunc(PairDeviceHandler(NewCreatePairDevice(db)))).Methods(http.MethodPost)
+
+	addr := fmt.Sprintf("%s:%s", host(), os.Getenv("PORT"))
 	fmt.Println("addr:", addr)
 
 	server := http.Server{
@@ -34,7 +41,16 @@ func main() {
 	}
 
 	log.Println("starting...")
-	log.Fatal(server.ListenAndServe())
+	return server.ListenAndServe()
+}
+
+func host() string {
+	h := os.Getenv("HOST")
+	if h == "" {
+		return "0.0.0.0"
+	}
+
+	return h
 }
 
 type Pair struct {
@@ -42,15 +58,34 @@ type Pair struct {
 	UserID   int64
 }
 
+type CustomResponseWriter interface {
+	http.ResponseWriter
+	JSON(statusCode int, data interface{})
+}
+type CustomHandlerFunc func(CustomResponseWriter, *http.Request)
+
+func (handler CustomHandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	handler(&JSONResponseWriter{w}, r)
+}
+
+type JSONResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (w *JSONResponseWriter) JSON(statusCode int, data interface{}) {
+	w.Header().Set("content-type", "application/json")
+	w.WriteHeader(http.StatusInternalServerError)
+	json.NewEncoder(w).Encode(data)
+}
+
 func PairDeviceHandler(device Device) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		logger.L(r.Context()).Info("pair-device")
 
-		l := zap.NewExample()
-		l = l.With(zap.Namespace("Homatic"), zap.String("i'm", "gophr"))
-		l.Info("pair-dvic")
 		var p Pair
 		err := json.NewDecoder(r.Body).Decode(&p)
 		if err != nil {
+			w.Header().Set("content-type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(err.Error())
 			return
@@ -60,17 +95,15 @@ func PairDeviceHandler(device Device) http.HandlerFunc {
 
 		err = device.Pair(p)
 		if err != nil {
+			w.Header().Set("content-type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(err.Error())
+		w.JSON(http.StatusOK, map[string]interface{}{"status": "active"})
 			return
 		}
 
+		w.Header().Set("content-type", "application/json")
 		w.Write([]byte(`{"status":"active"}`))
-	}
-}
 
-type Device interface {
-	Pair(p Pair) error
 }
 
 type CreatePairDeviceFunc func(p Pair) error
@@ -78,7 +111,11 @@ type CreatePairDeviceFunc func(p Pair) error
 func (fn CreatePairDeviceFunc) Pair(p Pair) error {
 	return fn(p)
 }
+type DB interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
 
+func NewCreatePairDevice(db DB) CreatePairDeviceFunc {
 func NewCreatePairDevice(db *sql.DB) CreatePairDeviceFunc {
 	return func(p Pair) error {
 		_, err := db.Exec("INSERT INTO pairs VALUES ($1,$2);", p.DeviceID, p.UserID)
