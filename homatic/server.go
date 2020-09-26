@@ -10,7 +10,7 @@ import (
 	"os"
 
 	"github.com/gorilla/mux"
-	"github.com/XBaNaNaX/gosep/homatic/logger"
+	"github.com/XBaNaNaX/gosep/logger"
 	_ "github.com/lib/pq"
 )
 
